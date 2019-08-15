@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  This stack deploys all resources needed for the Momenton Code Challenge
+Mappings:
+  NetworkData:
+    dmz0:
+      cidr: '10.0.1.0/24'
+    dmz1:
+      cidr: '10.0.3.0/24'
+      
+Resources:
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+      - Key: Name
+        Value: !Ref 'AWS::StackName'
+              
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    
+  AttachGateway:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+      
+  Dmz0:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [ NetworkData, dmz0, cidr ]
+      
+  Dmz0RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      
+  Dmz0Route:
+    Type: 'AWS::EC2::Route'
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref Dmz0RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      
+  Dmz0RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref Dmz0
+      RouteTableId: !Ref Dmz0RouteTable
+      
+  Dmz1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [ NetworkData, dmz1, cidr ]
+      
+  Dmz1RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      
+  Dmz1Route:
+    Type: 'AWS::EC2::Route'
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref Dmz1RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      
+  Dmz1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref Dmz1
+      RouteTableId: !Ref Dmz1RouteTable
+      
+Outputs:
+  VpcId:
+    Description: The Physical Resource Id of this VPC
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcId'
+            
+  VpcCidr:
+    Description: The Cidr Block defined for this VPC
+    Value: !GetAtt VPC.CidrBlock
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcCidr'
+            
+  Dmz0:
+    Description: The Physical Resource Id of the Dmz0 Subnet
+    Value: !Ref Dmz0
+    Export:
+      Name: !Sub '${AWS::StackName}-Dmz0'
+      
+  Dmz1:
+    Description: The Physical Resource Id of the Dmz1 Subnet
+    Value: !Ref Dmz1
+    Export:
+      Name: !Sub '${AWS::StackName}-Dmz1'
+      

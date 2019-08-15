@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  ECS Cluster for the Momenton Challenge
+  
+Parameters:
+  VpcStack:
+    Type: String
+    Description: The name of the VPC Stack which provides network services to this ECS cluster
+    
+Resources:
+  ECSCluster:
+    Type: 'AWS::ECS::Cluster'
+  ECSRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+      Path: '/'
+      Policies:
+        -
+          PolicyName: 'AWSServiceAccess'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              -
+                Effect: 'Allow'
+                Action: 'cloudwatch:PutMetricData'
+                Resource: '*'
+
+  ECSInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref ECSRole
+        
+  ECSSecGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${VpcStack}-VpcId'
+      GroupDescription: Enable HTTPS from the public internet
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          
+  ECSLaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      IamInstanceProfile: !Ref ECSInstanceProfile
+      # this image id obtained from querying ssm parameter: /aws/service/ecs/optimized-ami/amazon-linux-2/recommended
+      # in ap-southeast-2
+      ImageId: ami-039bb4c3a7946ce19
+      InstanceType: t3.micro
+      SecurityGroups:
+        - !Ref ECSSecGroup
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            |
+            #cloud-config:
+            runcmd:
+              - [yum,-y,upgrade,ecs-init]
+              - echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+                
+  ECSGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue: !Sub '${VpcStack}-Dmz0'
+        - Fn::ImportValue: !Sub '${VpcStack}-Dmz1'
+      MetricsCollection:
+        -
+          Granularity: 1Minute
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: '60'
+      Cooldown: '30'
+      LaunchConfigurationName: !Ref ECSLaunchConfig
+      MinSize: 0
+      MaxSize: 1
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-ECSGroup'
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 0
+        MaxBatchSize: 1
+        WaitOnResourceSignals: 'false'
+        PauseTime: PT1M00S
+
+  ECSClusterScaleUp:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref ECSGroup
+      Cooldown: 30
+      ScalingAdjustment: 1
+
+  ECSClusterScaleDown:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref ECSGroup
+      Cooldown: 60
+      ScalingAdjustment: 1
+
+  CPUUtilisationHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: 70
+      Period: 60
+      AlarmActions:
+      - !Ref ECSClusterScaleUp
+      Namespace: AWS/ECS
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      ComparisonOperator: GreaterThanThreshold
+      MetricName: CPUUtilization
+      TreatMissingData: ignore
+
+  MemoryUtilisationHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: 70
+      Period: 60
+      AlarmActions:
+      - !Ref ECSClusterScaleUp
+      Namespace: AWS/ECS
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      ComparisonOperator: GreaterThanThreshold
+      MetricName: MemoryUtilization
+      TreatMissingData: ignore
+
+  CPUReservationHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: 70
+      Period: 60
+      AlarmActions:
+      - !Ref ECSClusterScaleUp
+      Namespace: AWS/ECS
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      ComparisonOperator: GreaterThanThreshold
+      MetricName: CPUReservation
+      TreatMissingData: ignore
+
+  MemoryReservationHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: 70
+      Period: 60
+      AlarmActions:
+      - !Ref ECSClusterScaleUp
+      Namespace: AWS/ECS
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      ComparisonOperator: GreaterThanThreshold
+      MetricName: MemoryReservation
+      TreatMissingData: ignore
+Outputs:
+  ECSClusterArn:
+    Description: The ARN of this ECS Cluster
+    Value: !GetAtt ECSCluster.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ECSClusterArn'
+      
+  ECSGroup:
+    Description: >-
+      The AutoScaling group which controls the Container instances in the ECS Cluser
+    Value: !Ref ECSGroup
+
+  ECSSecGroup:
+    Description: The Security group which controls access to the ECS Cluster
+    Value: !Ref ECSSecGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ECSSecGroup'

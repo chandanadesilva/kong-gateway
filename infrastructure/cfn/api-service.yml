@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ECS Tasks, Services and resources for the Api Service
+Parameters:
+  VpcStack:
+    Type: String
+    Description: The name of the VPC Stack which provides network services to this ECS cluster
+    
+  EcsClusterStack:
+    Type: String
+    Description: The name of the Stach which deploys the ECS Cluster used by the Services in this stack  
+
+Resources:
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      SecurityGroups:
+        - Fn::ImportValue: !Sub '${EcsClusterStack}-ECSSecGroup'
+      Subnets:
+        - Fn::ImportValue: !Sub '${VpcStack}-Dmz0'
+        - Fn::ImportValue: !Sub '${VpcStack}-Dmz1'
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+      # NOTE: this load balancer needs to store it's logs in s3. Not implemented 
+      #       as it is overkill for this assignment    
+
+  ApiTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: ip
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      Matcher:
+        HttpCode: '200'
+      Port: '80'
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: stickiness.enabled
+          Value: 'false'
+      UnhealthyThresholdCount: '2'
+      VpcId:
+        Fn::ImportValue: !Sub '${VpcStack}-VpcId'
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ApiTargetGroup
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: '80'
+      Protocol: HTTP
+
+  ApiListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref Listener
+      Priority: 2
+      Actions:
+        - TargetGroupArn: !Ref ApiTargetGroup
+          Type: forward
+      Conditions:
+        - Field: host-header
+          Values:
+            - api.desilva.id.au
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: 'Allow'
+            Principal:
+              Service:
+                - 'ecs-tasks.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      # Add any task specific policies here
+
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      NetworkMode: bridge
+      ContainerDefinitions:
+        -
+          Name: api
+          PortMappings:
+            -
+              ContainerPort: 80
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-create-group: true
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-group: !Sub '${AWS::Stackname}-apilogs'
+          Image: 'tbd kong image'
+
+  ApiService:
+    Type: "AWS::ECS::Service"
+    Properties:
+      Cluster:
+        Fn::ImportValue: !Sub '${EcsClusterStack}-ECSClusterArn'
+      DesiredCount: 0
+      HealthCheckGracePeriodSeconds: 60
+      LaunchType: 'EC2'
+      LoadBalancers:
+      - TargetGroupArn: !Ref ApiTargetGroup
+        ContainerName: api
+        ContainerPort: 80
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - Fn::ImportValue: !Sub '${EcsClusterStack}-ECSSecGroup'
+          Subnets:
+            - Fn::ImportValue: !Sub '${VpcStack}-Dmz0'
+            - Fn::ImportValue: !Sub '${VpcStack}-Dmz1'
+      TaskDefinition: !Ref ApiTask
+
+  ApiDNS:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: desilva.id.au
+      Comment: Domain Name for the Api Service
+      Name: api.desilva.id.au
+      Type: A
+      AliasTarget:
+        HostedZoneId: !GetAtt 'LoadBalancer.CanonicalHostedZoneID'
+        DNSName: !GetAtt 'LoadBalancer.DNSName'
+
+Outputs:
+  RedirectServiceInternalEndpoint:
+    Description: The DNS name of Internal endpoint of the Redirect Service
+    Value: !Ref RedirectInternalDNS
+    Export:
+      Name: !Sub '${AWS::StackName}-RedirectInternalEndpoint'
+  ApiServiceInternalEndpoint:
+    Description: The DNS name of Internal endpoint of the Api Service
+    Value: !Ref ApiInternalDNS
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiInternalEndpoint'
+  DBClusterEndpoint:
+    Description: Primary (Write) Endpoint address for the DB Cluster
+    Value: !GetAtt DBCluster.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-DBPrimaryEndPoint'
+  DBClusterReadEndpoint:
+    Description: Read  Endpoint address for the DB Cluster
+    Value: !GetAtt DBCluster.ReadEndpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-DBReadEndPoint'
+  DBClusterPort:
+    Description: Port Address for the DB Cluster
+    Value: !GetAtt DBCluster.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-DBPort'
+  DBClusterMasterUser:
+    Description: Master User for the DB Cluster
+    Value: !Ref DBMasterUser
+    Export:
+      Name: !Sub '${AWS::StackName}-DBMasterUser'
+  DBClusterMasterPassword:
+    Description: Master User Password for the DB Cluster
+    Value: !Sub 'aws ssm get-parameter --name /${AWS::StackName}/dbcluster_password'
+    Export:
+      Name: !Sub '${AWS::StackName}-DBMasterPassword'

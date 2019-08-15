@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ECR Repository for the Gateway Docker Image
+Resources:
+  ECR:
+    Type : AWS::ECR::Repository
+    Properties:
+      RepositoryName : !Select [1, !Split ['-',!Ref 'AWS::StackName']]
+      RepositoryPolicyText:
+        Version : '2012-10-17'
+        Statement:
+          -
+            Sid: AllowPut
+            Effect: Allow
+            Principal:
+              AWS:
+                - 'arn:aws:iam::982521259497:root'
+            Action:
+              - 'ecr:GetDownloadUrlForLayer'
+              - 'ecr:BatchGetImage'
+              - 'ecr:BatchCheckLayerAvailability'
+              - 'ecr:PutImage'
+              - 'ecr:InitiateLayerUpload'
+              - 'ecr:UploadLayerPart'
+              - 'ecr:CompleteLayerUpload'
+              - 'ecr:DescribeImages'
+              - 'ecr:ListImages'
+              - 'ecr:BatchDeleteImage'
+                                        
+Outputs:
+  ECR:
+    Description: ECR Repository for the Gateway Image
+    Value: !GetAtt ECR.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-ecr
