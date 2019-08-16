@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: >-
-  This stack deploys all resources needed for the Momenton Code Challenge
+  This stack deploys networking resources for the Gateway
 Mappings:
   NetworkData:
     dmz0:
