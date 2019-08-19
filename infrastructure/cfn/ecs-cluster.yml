@@ -10,6 +10,7 @@ Parameters:
 Resources:
   ECSCluster:
     Type: 'AWS::ECS::Cluster'
+    
   ECSRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -23,7 +24,8 @@ Resources:
             Action:
               - 'sts:AssumeRole'
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role'
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM'
       Path: '/'
       Policies:
         -
@@ -50,12 +52,12 @@ Resources:
       GroupDescription: Enable HTTPS from the public internet
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
+          FromPort: 8000
+          ToPort: 8000
           CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
+          FromPort: 8001
+          ToPort: 8001
           CidrIp: 0.0.0.0/0
           
   ECSLaunchConfig:
@@ -66,6 +68,7 @@ Resources:
       # in ap-southeast-2
       ImageId: ami-039bb4c3a7946ce19
       InstanceType: t3.micro
+      AssociatePublicIpAddress: true
       SecurityGroups:
         - !Ref ECSSecGroup
       UserData:
@@ -73,8 +76,12 @@ Resources:
           Fn::Sub:
             |
             #cloud-config:
+            package_upgrade: true
+            packages:
+              - amazon-ssm-agent
             runcmd:
-              - [yum,-y,upgrade,ecs-init]
+              - [systemctl, enable, amazon-ssm-agent]
+              - [systemctl, start, amazon-ssm-agent]
               - echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
                 
   ECSGroup:

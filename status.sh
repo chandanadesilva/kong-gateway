@@ -12,7 +12,6 @@ declare ECS_CLUSTER_CAPACITY
 declare GATEWAY_SERVICE_DESIRED
 declare GATEWAY_SERVICE_RUNNING
 
-
 function status()
 {
 	echo -n 'reading current capacity status '
@@ -34,18 +33,51 @@ function status()
 
 function start()
 {
-	echo "starting ECS Cluster : ${_ECSCluster}"
+	echo "starting ECS Cluster : ${_ECSCluster} with 1 instance"
 	${AWS} autoscaling set-desired-capacity \
 	--auto-scaling-group-name ${_ECSGroup} \
 	--desired-capacity 1
-	[ $? -eq 0 ] || { echo "failed to set capacity of AS Group ${_ECSGroup}"; exit 1; }
+	[ $? -eq 0 ] || { echo "failed to set capacity of AS Group ${_ECSGroup} to one"; exit 1; }
 	
 	echo "waiting one minute"
 	${SLEEP} 60
 	
-	echo "starting Gateway Service ${GATEWAY_SERVICE}"	
+	echo "starting Gateway Service ${GATEWAY_SERVICE} with 1 server"
+	${AWS} ecs update-service --cluster ${_ECSCluster} \
+	--service ${GATEWAY_SERVICE} --desired-count 1
+	[ $? -eq 0 ] || { echo "failed to set capacity of Gateway Service ${GATEWAY_SERVICE} to one"; exit 1; }
+	
+	status
 }
 
+function stop()
+{
+	echo "stopping Gateway Service ${GATEWAY_SERVICE} with 1 server"
+	${AWS} ecs update-service --cluster ${_ECSCluster} \
+	--service ${GATEWAY_SERVICE} --desired-count 0
+	[ $? -eq 0 ] || { echo "failed to set capacity of Gateway Service ${GATEWAY_SERVICE} to zero"; exit 1; }
+	
+	echo "waiting one minute"
+	${SLEEP} 60
+	
+	echo "stopping ECS Cluster : ${_ECSCluster}"
+	${AWS} autoscaling set-desired-capacity \
+	--auto-scaling-group-name ${_ECSGroup} \
+	--desired-capacity 0
+	[ $? -eq 0 ] || { echo "failed to set capacity of AS Group ${_ECSGroup} to zero"; exit 1; }
+	
+	status
+}
+function status()
+{
+cat << EOT
+ECS Cluster Name                  : ${_ECSCluster}
+ECS Cluster Autocaling Group Name : ${_ECSGroup} 
+                 Current Capacity : ${ECS_CLUSTER_CAPACITY} 
+Gateway ECS Service Name          : ${GATEWAY_SERVICE}
+        Capacity (Desired/Running): ${GATEWAY_SERVICE_DESIRED} /  ${GATEWAY_SERVICE_RUNNING}
+EOT
+}
 
 # this will declare two variables, _ECSCluster and _ECSGroup
 echo -n 'reading ECS Cluster Information : '
@@ -70,14 +102,11 @@ cloudformation describe-stack-resources --stack-name ${GATEWAY_STACK} \
 GATEWAY_SERVICE=$( echo ${_GatewayService} | ${SED} -n 's/\(arn:.*service\/\)\(.*\)/\2/ p')
 echo " done"
 
-status
-cat << EOT
-ECS Cluster Name                  : ${_ECSCluster}
-ECS Cluster Autocaling Group Name : ${_ECSGroup} 
-                 Current Capacity : ${ECS_CLUSTER_CAPACITY} 
-Gateway ECS Service Name          : ${GATEWAY_SERVICE}
-        Capacity (Desired/Running): ${GATEWAY_SERVICE_DESIRED} /  ${GATEWAY_SERVICE_RUNNING}
-EOT
-
-if [ "${COMMAND}" == "start" ]
+echo "Command : ${COMMAND}"
+if [[ ${COMMAND} =~ [startstopstatus] ]]
 then
+	${COMMAND}
+else
+	echo 'invalid command, this script must be started as start, stop, or status.sh. Eg: AWS_PROFILE=<profile> ./status'
+	exit 1 
+fi

@@ -64,7 +64,7 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref GatewayTargetGroup
       LoadBalancerArn: !Ref GatewayLoadBalancer
-      Port: '80'
+      Port: 8000
       Protocol: HTTP
 
   GatewayListenerRule:
@@ -77,6 +77,54 @@ Resources:
       Priority: 2
       Actions:
         - TargetGroupArn: !Ref GatewayTargetGroup
+          Type: forward
+      Conditions:
+        - Field: host-header
+          Values:
+            - !Ref GatewayDNS
+
+  GatewayAdminTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      Matcher:
+        HttpCode: '200'
+      Port: 8001
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: stickiness.enabled
+          Value: 'false'
+      UnhealthyThresholdCount: '2'
+      VpcId:
+        Fn::ImportValue: !Sub '${VpcStack}-VpcId'
+
+  GatewayAdminListener:
+    DependsOn:
+      - GatewayLoadBalancer
+      - GatewayAdminTargetGroup
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref GatewayAdminTargetGroup
+      LoadBalancerArn: !Ref GatewayLoadBalancer
+      Port: 8001
+      Protocol: HTTP
+
+  GatewayAdminListenerRule:
+    DependsOn:
+      - GatewayAdminListener
+      - GatewayDNS
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref GatewayAdminListener
+      Priority: 2
+      Actions:
+        - TargetGroupArn: !Ref GatewayAdminTargetGroup
           Type: forward
       Conditions:
         - Field: host-header
@@ -109,6 +157,8 @@ Resources:
           PortMappings:
             -
               ContainerPort: 8000
+            -
+              ContainerPort: 8001
           Memory: 128    
           LogConfiguration:
             LogDriver: awslogs
@@ -133,6 +183,9 @@ Resources:
         - TargetGroupArn: !Ref GatewayTargetGroup
           ContainerName: gateway
           ContainerPort: 8000
+        - TargetGroupArn: !Ref GatewayAdminTargetGroup
+          ContainerName: gateway
+          ContainerPort: 8001
       TaskDefinition: !Ref GatewayTask
 
   GatewayDNS:
