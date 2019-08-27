@@ -37,7 +37,7 @@ Resources:
               - 's3:PutObject'
             Resource:
               - !Sub 'arn:aws:s3:::${GatewayLoadBalancerLogs}/gateway/AWSLogs/${AWS::AccountId}/*'
-              - !Sub 'arn:aws:s3:::${GatewayLoadBalancerLogs}/web/AWSLogs/${AWS::AccountId}/*'
+              - !Sub 'arn:aws:s3:::${GatewayLoadBalancerLogs}/internal/AWSLogs/${AWS::AccountId}/*'
             Principal:
               # this magic number is the ELB Account ID for ap-southeast-2 from 
               # https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-access-logs.html#access-logging-bucket-permissions
@@ -135,21 +135,21 @@ Resources:
 
   GatewayAdminListener:
     DependsOn:
-      - GatewayLoadBalancer
+      - InternalLoadBalancer
       - GatewayAdminTargetGroup
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref GatewayAdminTargetGroup
-      LoadBalancerArn: !Ref GatewayLoadBalancer
+      LoadBalancerArn: !Ref InternalLoadBalancer
       Port: 8001
       Protocol: HTTP
 
   GatewayAdminListenerRule:
     DependsOn:
       - GatewayAdminListener
-      - GatewayDNS
+      - InternalDNS
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
     Properties:
       ListenerArn: !Ref GatewayAdminListener
@@ -160,7 +160,7 @@ Resources:
       Conditions:
         - Field: host-header
           Values:
-            - !Ref GatewayDNS
+            - !Ref InternalDNS
 
   TaskRole:
     Type: AWS::IAM::Role
@@ -201,7 +201,7 @@ Resources:
 
   GatewayService:
     DependsOn:
-      - GatewayAdminListener
+      - GatewayListener
       - GatewayTask
     Type: "AWS::ECS::Service"
     Properties:
@@ -266,7 +266,7 @@ Resources:
           CidrIp: 
             Fn::ImportValue: !Sub '${VpcStack}-VpcCidr'
           
-  WebLoadBalancer:
+  InternalLoadBalancer:
     DependsOn: GatewayLoadBalancerLogsPolicy
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -285,11 +285,11 @@ Resources:
         - Key: access_logs.s3.bucket
           Value: !Ref GatewayLoadBalancerLogs
         - Key: access_logs.s3.prefix
-          Value: 'web'
+          Value: 'internal'
 
-  WebDNS:
+  InternalDNS:
     DependsOn:
-      - WebLoadBalancer
+      - InternalLoadBalancer
     Type: AWS::Route53::RecordSet
     Properties:
       HostedZoneName: !Ref GatewayZone
@@ -298,7 +298,7 @@ Resources:
       Type: A
       AliasTarget:
         HostedZoneId: !GetAtt 'GatewayLoadBalancer.CanonicalHostedZoneID'
-        DNSName: !GetAtt 'WebLoadBalancer.DNSName'
+        DNSName: !GetAtt 'InternalLoadBalancer.DNSName'
         
   WebTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -321,21 +321,21 @@ Resources:
 
   WebListener:
     DependsOn:
-      - WebLoadBalancer
+      - InternalLoadBalancer
       - WebTargetGroup
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref WebTargetGroup
-      LoadBalancerArn: !Ref WebLoadBalancer
+      LoadBalancerArn: !Ref InternalLoadBalancer
       Port: 80
       Protocol: HTTP
 
   WebListenerRule:
     DependsOn:
       - WebListener
-      - WebDNS
+      - InternalDNS
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
     Properties:
       ListenerArn: !Ref WebListener
@@ -346,7 +346,7 @@ Resources:
       Conditions:
         - Field: host-header
           Values:
-            - !Ref WebDNS
+            - !Ref InternalDNS
 
   WebService:
     DependsOn:
