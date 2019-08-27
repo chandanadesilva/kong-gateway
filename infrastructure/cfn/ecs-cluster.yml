@@ -37,6 +37,17 @@ Resources:
                 Effect: 'Allow'
                 Action: 'cloudwatch:PutMetricData'
                 Resource: '*'
+        -
+          PolicyName: 'AllowTaskLogs'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              -
+                Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
 
   ECSInstanceProfile:
     Type: 'AWS::IAM::InstanceProfile'
@@ -44,12 +55,12 @@ Resources:
       Roles:
         - !Ref ECSRole
         
-  ECSSecGroup:
+  GatewaySecGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
       VpcId:
         Fn::ImportValue: !Sub '${VpcStack}-VpcId'
-      GroupDescription: Enable HTTPS from the public internet
+      GroupDescription: Enable HTTP from the public internet
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 8000
@@ -60,6 +71,25 @@ Resources:
           ToPort: 8001
           CidrIp: 0.0.0.0/0
           
+  ECSSecGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${VpcStack}-VpcId'
+      GroupDescription: Enable access to Containers in the ECS Cluster
+      SecurityGroupIngress:
+        - Description: Allow access to containers from the Internet Load balancer
+          IpProtocol: -1
+          FromPort: 0
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref GatewaySecGroup
+        - Description: Allow access to containers from the Internal Load balancer
+          IpProtocol: -1
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 
+            Fn::ImportValue: !Sub '${VpcStack}-VpcCidr'
+          
   ECSLaunchConfig:
     Type: 'AWS::AutoScaling::LaunchConfiguration'
     Properties:
@@ -68,7 +98,7 @@ Resources:
       # in ap-southeast-2
       ImageId: ami-039bb4c3a7946ce19
       InstanceType: t3.micro
-      AssociatePublicIpAddress: true
+      AssociatePublicIpAddress: false
       SecurityGroups:
         - !Ref ECSSecGroup
       UserData:
@@ -88,8 +118,8 @@ Resources:
     Type: 'AWS::AutoScaling::AutoScalingGroup'
     Properties:
       VPCZoneIdentifier:
-        - Fn::ImportValue: !Sub '${VpcStack}-Dmz0'
-        - Fn::ImportValue: !Sub '${VpcStack}-Dmz1'
+        - Fn::ImportValue: !Sub '${VpcStack}-Private0'
+        - Fn::ImportValue: !Sub '${VpcStack}-Private1'
       MetricsCollection:
         -
           Granularity: 1Minute
@@ -110,89 +140,6 @@ Resources:
         WaitOnResourceSignals: 'false'
         PauseTime: PT1M00S
 
-  ECSClusterScaleUp:
-    Type: AWS::AutoScaling::ScalingPolicy
-    Properties:
-      AdjustmentType: ChangeInCapacity
-      AutoScalingGroupName: !Ref ECSGroup
-      Cooldown: 30
-      ScalingAdjustment: 1
-
-  ECSClusterScaleDown:
-    Type: AWS::AutoScaling::ScalingPolicy
-    Properties:
-      AdjustmentType: ChangeInCapacity
-      AutoScalingGroupName: !Ref ECSGroup
-      Cooldown: 60
-      ScalingAdjustment: 1
-
-  CPUUtilisationHigh:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      EvaluationPeriods: 2
-      Statistic: Average
-      Threshold: 70
-      Period: 60
-      AlarmActions:
-      - !Ref ECSClusterScaleUp
-      Namespace: AWS/ECS
-      Dimensions:
-        - Name: ClusterName
-          Value: !Ref ECSCluster
-      ComparisonOperator: GreaterThanThreshold
-      MetricName: CPUUtilization
-      TreatMissingData: ignore
-
-  MemoryUtilisationHigh:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      EvaluationPeriods: 2
-      Statistic: Average
-      Threshold: 70
-      Period: 60
-      AlarmActions:
-      - !Ref ECSClusterScaleUp
-      Namespace: AWS/ECS
-      Dimensions:
-        - Name: ClusterName
-          Value: !Ref ECSCluster
-      ComparisonOperator: GreaterThanThreshold
-      MetricName: MemoryUtilization
-      TreatMissingData: ignore
-
-  CPUReservationHigh:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      EvaluationPeriods: 2
-      Statistic: Average
-      Threshold: 70
-      Period: 60
-      AlarmActions:
-      - !Ref ECSClusterScaleUp
-      Namespace: AWS/ECS
-      Dimensions:
-        - Name: ClusterName
-          Value: !Ref ECSCluster
-      ComparisonOperator: GreaterThanThreshold
-      MetricName: CPUReservation
-      TreatMissingData: ignore
-
-  MemoryReservationHigh:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      EvaluationPeriods: 2
-      Statistic: Average
-      Threshold: 70
-      Period: 60
-      AlarmActions:
-      - !Ref ECSClusterScaleUp
-      Namespace: AWS/ECS
-      Dimensions:
-        - Name: ClusterName
-          Value: !Ref ECSCluster
-      ComparisonOperator: GreaterThanThreshold
-      MetricName: MemoryReservation
-      TreatMissingData: ignore
 Outputs:
   ECSClusterArn:
     Description: The ARN of this ECS Cluster
@@ -210,3 +157,9 @@ Outputs:
     Value: !Ref ECSSecGroup
     Export:
       Name: !Sub '${AWS::StackName}-ECSSecGroup'
+      
+  GatewaySecGroup:
+    Description: The Security group which controls access to the Gateway
+    Value: !Ref GatewaySecGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-GatewaySecGroup'

@@ -7,6 +7,10 @@ Mappings:
       cidr: '10.0.1.0/24'
     dmz1:
       cidr: '10.0.3.0/24'
+    private0:
+      cidr: '10.0.2.0/24'
+    private1:
+      cidr: '10.0.4.0/24'
       
 Resources:
   VPC:
@@ -52,6 +56,20 @@ Resources:
       SubnetId: !Ref Dmz0
       RouteTableId: !Ref Dmz0RouteTable
       
+  Dmz0Eip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  
+  Dmz0Nat:
+    Type: AWS::EC2::NatGateway 
+    DependsOn: Dmz0Eip
+    Properties:
+      AllocationId: !GetAtt Dmz0Eip.AllocationId
+      SubnetId: !Ref Dmz0
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-Dmz0Nat' 
   Dmz1:
     Type: 'AWS::EC2::Subnet'
     Properties:
@@ -78,6 +96,74 @@ Resources:
       SubnetId: !Ref Dmz1
       RouteTableId: !Ref Dmz1RouteTable
       
+  Dmz1Eip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  
+  Dmz1Nat:
+    Type: AWS::EC2::NatGateway 
+    DependsOn: Dmz1Eip
+    Properties:
+      AllocationId: !GetAtt Dmz1Eip.AllocationId
+      SubnetId: !Ref Dmz1
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-Dmz1Nat' 
+      
+  Private0:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [ NetworkData, private0, cidr ]
+
+  Private0RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      
+  Private0Route:
+    Type: 'AWS::EC2::Route'
+    DependsOn: [AttachGateway, Dmz0Nat ]
+    Properties:
+      RouteTableId: !Ref Private0RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref Dmz0Nat
+      
+  Private0RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref Private0
+      RouteTableId: !Ref Private0RouteTable
+  
+  Private1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [ NetworkData, private1, cidr ]
+      
+  Private1RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+ 
+  Private1Route:
+    Type: 'AWS::EC2::Route'
+    DependsOn: [ AttachGateway, Dmz1Nat ]
+    Properties:
+      RouteTableId: !Ref Private1RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref Dmz1Nat
+      
+  Private1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref Private1
+      RouteTableId: !Ref Private1RouteTable
+      
+      
 Outputs:
   VpcId:
     Description: The Physical Resource Id of this VPC
@@ -103,3 +189,14 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-Dmz1'
       
+  Private0:
+    Description: The Physical Resource Id of the Private0 Subnet
+    Value: !Ref Private0
+    Export:
+      Name: !Sub '${AWS::StackName}-Private0'
+      
+  Private1:
+    Description: The Physical Resource Id of the Private1 Subnet
+    Value: !Ref Private1
+    Export:
+      Name: !Sub '${AWS::StackName}-Private1'

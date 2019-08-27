@@ -20,20 +20,51 @@ Parameters:
     Default: 'desilva.id.au.'    
     
 Resources:
+  GatewayLoadBalancerLogs:
+    Type: AWS::S3::Bucket
+    
+  GatewayLoadBalancerLogsPolicy:
+    DependsOn: GatewayLoadBalancerLogs
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref GatewayLoadBalancerLogs
+      PolicyDocument:
+        Statement:
+          -
+            Sid: 'AllowElasticLoadBalancingLogDeliveryWrite'
+            Effect: 'Allow'
+            Action:
+              - 's3:PutObject'
+            Resource:
+              - !Sub 'arn:aws:s3:::${GatewayLoadBalancerLogs}/gateway/AWSLogs/${AWS::AccountId}/*'
+              - !Sub 'arn:aws:s3:::${GatewayLoadBalancerLogs}/web/AWSLogs/${AWS::AccountId}/*'
+            Principal:
+              # this magic number is the ELB Account ID for ap-southeast-2 from 
+              # https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-access-logs.html#access-logging-bucket-permissions
+              AWS:
+                - 783225319266
+                
   GatewayLoadBalancer:
+    DependsOn: GatewayLoadBalancerLogsPolicy
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
+      Type: application
       Scheme: internet-facing
       SecurityGroups:
         - Fn::ImportValue: !Sub '${EcsClusterStack}-ECSSecGroup'
+        - Fn::ImportValue: !Sub '${EcsClusterStack}-GatewaySecGroup'
       Subnets:
         - Fn::ImportValue: !Sub '${VpcStack}-Dmz0'
         - Fn::ImportValue: !Sub '${VpcStack}-Dmz1'
       LoadBalancerAttributes:
         - Key: idle_timeout.timeout_seconds
           Value: '60'
-      # NOTE: this load balancer needs to store it's logs in s3. Not implemented 
-      #       as it is overkill for this assignment    
+        - Key: access_logs.s3.enabled
+          Value: true
+        - Key: access_logs.s3.bucket
+          Value: !Ref GatewayLoadBalancerLogs
+        - Key: access_logs.s3.prefix
+          Value: 'gateway'
 
   GatewayTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -145,7 +176,7 @@ Resources:
             Action:
               - 'sts:AssumeRole'
       # Add any task specific policies here
-
+      
   GatewayTask:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -170,7 +201,7 @@ Resources:
 
   GatewayService:
     DependsOn:
-      - GatewayListener
+      - GatewayAdminListener
       - GatewayTask
     Type: "AWS::ECS::Service"
     Properties:
@@ -200,3 +231,136 @@ Resources:
       AliasTarget:
         HostedZoneId: !GetAtt 'GatewayLoadBalancer.CanonicalHostedZoneID'
         DNSName: !GetAtt 'GatewayLoadBalancer.DNSName'
+
+  WebTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      NetworkMode: bridge
+      ContainerDefinitions:
+        -
+          Name: web
+          PortMappings:
+            -
+              ContainerPort: 80
+          Memory: 128    
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-create-group: true
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-group: !Sub '${AWS::StackName}-web'
+          Image: 'httpd:2.4'
+
+
+  WebSecGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${VpcStack}-VpcId'
+      GroupDescription: Enable access to Web Service Containers from Internal Load Balancer
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 
+            Fn::ImportValue: !Sub '${VpcStack}-VpcCidr'
+          
+  WebLoadBalancer:
+    DependsOn: GatewayLoadBalancerLogsPolicy
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internal
+      SecurityGroups:
+        - !Ref WebSecGroup
+      Subnets:
+        - Fn::ImportValue: !Sub '${VpcStack}-Private0'
+        - Fn::ImportValue: !Sub '${VpcStack}-Private1'
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+        - Key: access_logs.s3.enabled
+          Value: true
+        - Key: access_logs.s3.bucket
+          Value: !Ref GatewayLoadBalancerLogs
+        - Key: access_logs.s3.prefix
+          Value: 'web'
+
+  WebDNS:
+    DependsOn:
+      - WebLoadBalancer
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Ref GatewayZone
+      Comment: Domain Name for the Gateway
+      Name: !Sub 'web.${GatewayZone}'
+      Type: A
+      AliasTarget:
+        HostedZoneId: !GetAtt 'GatewayLoadBalancer.CanonicalHostedZoneID'
+        DNSName: !GetAtt 'WebLoadBalancer.DNSName'
+        
+  WebTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      Matcher:
+        HttpCode: '200'
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: stickiness.enabled
+          Value: 'false'
+      UnhealthyThresholdCount: '2'
+      VpcId:
+        Fn::ImportValue: !Sub '${VpcStack}-VpcId'
+
+  WebListener:
+    DependsOn:
+      - WebLoadBalancer
+      - WebTargetGroup
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebTargetGroup
+      LoadBalancerArn: !Ref WebLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  WebListenerRule:
+    DependsOn:
+      - WebListener
+      - WebDNS
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref WebListener
+      Priority: 2
+      Actions:
+        - TargetGroupArn: !Ref WebTargetGroup
+          Type: forward
+      Conditions:
+        - Field: host-header
+          Values:
+            - !Ref WebDNS
+
+  WebService:
+    DependsOn:
+      - WebListener
+      - WebTask
+    Type: "AWS::ECS::Service"
+    Properties:
+      Cluster:
+        Fn::ImportValue: !Sub '${EcsClusterStack}-ECSClusterArn'
+      DesiredCount: 0
+      HealthCheckGracePeriodSeconds: 60
+      LaunchType: 'EC2'
+      LoadBalancers:
+        - TargetGroupArn: !Ref WebTargetGroup
+          ContainerName: web
+          ContainerPort: 80
+      TaskDefinition: !Ref WebTask

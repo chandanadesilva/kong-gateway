@@ -42,6 +42,11 @@ function start()
 	echo "waiting one minute"
 	${SLEEP} 60
 	
+	echo "starting Web Service ${WEB_SERVICE} with 1 server"
+	${AWS} ecs update-service --cluster ${_ECSCluster} \
+	--service ${WEB_SERVICE} --desired-count 1
+	[ $? -eq 0 ] || { echo "failed to set capacity of Gateway Service ${WEB_SERVICE} to one"; exit 1; }
+	
 	echo "starting Gateway Service ${GATEWAY_SERVICE} with 1 server"
 	${AWS} ecs update-service --cluster ${_ECSCluster} \
 	--service ${GATEWAY_SERVICE} --desired-count 1
@@ -56,6 +61,11 @@ function stop()
 	${AWS} ecs update-service --cluster ${_ECSCluster} \
 	--service ${GATEWAY_SERVICE} --desired-count 0
 	[ $? -eq 0 ] || { echo "failed to set capacity of Gateway Service ${GATEWAY_SERVICE} to zero"; exit 1; }
+	
+	echo "stopping Web Service ${WEB_SERVICE} with 1 server"
+	${AWS} ecs update-service --cluster ${_ECSCluster} \
+	--service ${WEB_SERVICE} --desired-count 0
+	[ $? -eq 0 ] || { echo "failed to set capacity of Gateway Service ${WEB_SERVICE} to zero"; exit 1; }
 	
 	echo "waiting one minute"
 	${SLEEP} 60
@@ -100,6 +110,18 @@ cloudformation describe-stack-resources --stack-name ${GATEWAY_STACK} \
 --query 'StackResources[?LogicalResourceId==`GatewayService`].[LogicalResourceId,PhysicalResourceId]')
 [ $? -eq 0 ] || { echo "failed to read Gateway information"; exit 1; }
 GATEWAY_SERVICE=$( echo ${_GatewayService} | ${SED} -n 's/\(arn:.*service\/\)\(.*\)/\2/ p')
+echo " done"
+
+# this will declare a variable named _WebService
+echo -n 'reading Gateway stack details: '
+while read logical physical 
+do
+	declare -x _${logical}="${physical}"
+done < <(${AWS} --output text \
+cloudformation describe-stack-resources --stack-name ${GATEWAY_STACK} \
+--query 'StackResources[?LogicalResourceId==`WebService`].[LogicalResourceId,PhysicalResourceId]')
+[ $? -eq 0 ] || { echo "failed to read Gateway information"; exit 1; }
+WEB_SERVICE=$( echo ${_WebService} | ${SED} -n 's/\(arn:.*service\/\)\(.*\)/\2/ p')
 echo " done"
 
 echo "Command : ${COMMAND}"
